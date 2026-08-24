@@ -71,6 +71,9 @@ const PROFILE_SCOPED_PREFIXES = [
   "/api/status",
   "/api/gateway",
   "/api/analytics",
+  // The Overview panel aggregates profile-scoped sources (status, session DB,
+  // config), so it must follow the management switcher like they do.
+  "/api/overview",
   "/api/skills",
   "/api/tools/toolsets",
   "/api/config",
@@ -510,6 +513,34 @@ export const api = {
   getAnalytics: (days: number, profile = getManagementProfile()) =>
     fetchJSON<AnalyticsResponse>(
       appendProfileParam(`/api/analytics/usage?days=${days}`, profile),
+    ),
+  /** Cross-cutting status panel backing the dashboard landing page.
+   *
+   * ``refresh`` is ``"all"`` or a comma-separated list of section keys. Only
+   * pass it on an explicit user action: it forces the slow probes (notably the
+   * ~2s IMAP reachability check) that a normal load deliberately serves from
+   * cache. */
+  getOverview: (
+    days: number,
+    refresh = "",
+    profile = getManagementProfile(),
+  ) => {
+    const qs = new URLSearchParams({ days: String(days) });
+    if (refresh) qs.set("refresh", refresh);
+    return fetchJSON<OverviewResponse>(
+      appendProfileParam(`/api/overview?${qs.toString()}`, profile),
+    );
+  },
+  getOverviewSessions: (
+    days: number,
+    limit = 200,
+    profile = getManagementProfile(),
+  ) =>
+    fetchJSON<OverviewSessionsResponse>(
+      appendProfileParam(
+        `/api/overview/sessions?days=${days}&limit=${limit}`,
+        profile,
+      ),
     ),
   getModelsAnalytics: (days: number, profile = getManagementProfile()) =>
     fetchJSON<ModelsAnalyticsResponse>(
@@ -2136,6 +2167,73 @@ export interface AnalyticsSkillsSummary {
   total_skill_edits: number;
   total_skill_actions: number;
   distinct_skills_used: number;
+}
+
+// ── Overview panel (GET /api/overview) ──────────────────────────────────────
+
+/** Health of one Overview section. Drives the badge tone. */
+export type OverviewStatus = "ok" | "warn" | "error" | "unknown";
+
+/** Uniform envelope every Overview section is wrapped in.
+ *
+ * ``detail`` is intentionally loose: each section has its own shape (see the
+ * per-section detail types below) and the page narrows it at the point of use.
+ * ``notes`` carries caveats the backend wants shown verbatim (e.g. "spend is a
+ * local estimate") so the UI never hardcodes them. */
+export interface OverviewSection {
+  status: OverviewStatus;
+  headline: string;
+  detail: Record<string, unknown>;
+  notes: string[];
+  link: string | null;
+  last_checked: string | null;
+  stale: boolean;
+}
+
+export interface OverviewResponse {
+  generated_at: string | null;
+  period_days: number;
+  overall_status: OverviewStatus;
+  status_counts: Partial<Record<OverviewStatus, number>>;
+  section_order: string[];
+  sections: Record<string, OverviewSection>;
+}
+
+/** One row of the per-session cost drill-down. */
+export interface OverviewSessionRow {
+  id: string;
+  title: string | null;
+  source: string;
+  model: string | null;
+  billing_provider: string;
+  started_at: number;
+  started_at_iso: string | null;
+  ended_at: number | null;
+  ended_at_iso: string | null;
+  end_reason: string | null;
+  message_count: number;
+  tool_call_count: number;
+  api_call_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  estimated_cost_usd: number;
+  actual_cost_usd: number;
+  /** Auxiliary (non-main-agent) spend attributed to this session. */
+  aux_estimated_cost_usd: number;
+  cost_status: string | null;
+  chat_type: string | null;
+  display_name: string | null;
+}
+
+export interface OverviewSessionsResponse {
+  period_days: number;
+  limit: number;
+  count: number;
+  truncated: boolean;
+  sessions: OverviewSessionRow[];
 }
 
 export interface AnalyticsResponse {

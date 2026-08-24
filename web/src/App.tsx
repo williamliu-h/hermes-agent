@@ -45,6 +45,7 @@ import {
   Radio,
   RotateCw,
   Settings,
+  LayoutDashboard,
   Shield,
   ShieldCheck,
   Sparkles,
@@ -77,6 +78,7 @@ import { useSystemActions } from "@/contexts/useSystemActions";
 import type { SystemAction } from "@/contexts/system-actions-context";
 // Route pages are lazy-loaded so the initial dashboard shell does not pay for
 // every admin surface (and heavy deps like xterm) up front.
+const OverviewPage = lazy(() => import("@/pages/OverviewPage"));
 const ConfigPage = lazy(() => import("@/pages/ConfigPage"));
 const DocsPage = lazy(() => import("@/pages/DocsPage"));
 const EnvPage = lazy(() => import("@/pages/EnvPage"));
@@ -123,10 +125,6 @@ function RouteFallback({ label = "Loading…" }: { label?: string }) {
   );
 }
 
-function RootRedirect() {
-  return <Navigate to="/sessions" replace />;
-}
-
 function UnknownRouteFallback({ pluginsLoading }: { pluginsLoading: boolean }) {
   if (pluginsLoading) {
     // Render nothing during the plugin-load window — a spinner here would just flash.
@@ -154,7 +152,7 @@ const CHAT_NAV_ITEM: NavItem = {
  * keep working.
  */
 const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
-  "/": RootRedirect,
+  "/": OverviewPage,
   "/sessions": SessionsPage,
   "/files": FilesPage,
   "/analytics": AnalyticsPage,
@@ -184,6 +182,7 @@ function ChatRouteSink() {
 }
 
 const BUILTIN_NAV_REST: NavItem[] = [
+  { path: "/", label: "Overview", icon: LayoutDashboard },
   {
     path: "/sessions",
     labelKey: "sessions",

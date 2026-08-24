@@ -34,7 +34,8 @@ export function resolvePageTitle(
 ): string {
   const normalized = pathname.replace(/\/$/, "") || "/";
   if (normalized === "/") {
-    return t.app.nav.sessions;
+    // Root renders the Overview landing page (it used to redirect to Sessions).
+    return "Overview";
   }
   const plugin = pluginTabs.find((p) => p.path === normalized);
   if (plugin) {

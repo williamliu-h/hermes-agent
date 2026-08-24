@@ -15673,6 +15673,18 @@ async def get_models_analytics(
     return await asyncio.to_thread(_get_models_analytics, days, profile)
 
 
+# Mounted here, after the analytics handlers whose session-DB helpers it
+# composes, so the cross-cutting Overview panel reads the same sources the
+# specialised pages do instead of reimplementing them.
+from hermes_cli.web_routers import overview as _overview_routes  # noqa: E402
+
+app.include_router(_overview_routes.router)
+from hermes_cli.web_routers.overview import (  # noqa: E402,F401 — legacy re-export parity with the other routers
+    get_overview,
+    get_overview_sessions,
+)
+
+
 # ---------------------------------------------------------------------------
 # /api/pty — PTY-over-WebSocket bridge for the dashboard "Chat" tab.
 #
