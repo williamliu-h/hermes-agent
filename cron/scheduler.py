@@ -2675,6 +2675,54 @@ def _resolve_delivery_targets(job: dict) -> List[dict]:
     return targets
 
 
+def _unresolved_delivery_reason(job: dict, deliver_value: str) -> str:
+    """Explain why ``deliver_value`` resolved to no target, and how to fix it.
+
+    The bare message this replaces ("no delivery target resolved for
+    deliver=discord") names only the symptom, and it is re-stamped into
+    ``last_delivery_error`` on every run of an affected job — so a job can fail
+    to deliver for its whole life while the record never says what to change.
+    The operator cannot tell an unknown platform from a known one whose home
+    channel was never configured, and the second case dominates in practice: a
+    CLI-created job has no ``origin`` (#43014), so a bare platform name can
+    only resolve through that platform's home channel. Name the cause and the
+    remedy per token instead.
+    """
+    origin = _resolve_origin(job)
+    hints: List[str] = []
+    for raw in [part.strip() for part in deliver_value.split(",") if part.strip()]:
+        for part in _expand_routing_tokens(raw):
+            if part.lower() in {"local", "origin"}:
+                continue
+            if parse_bot_chat_deliver_token(part) is not None:
+                continue
+            if ":" in part:
+                # Explicit platform:chat_id — resolve_send_target already
+                # logged the concrete resolution error for this token.
+                continue
+            if not _is_known_delivery_platform(part):
+                hints.append(f"'{part}' is not a known cron delivery platform")
+                continue
+            env_var = _resolve_home_env_var(part) or f"{part.upper()}_HOME_CHANNEL"
+            why = (
+                "the job has no origin"
+                if not origin
+                else f"the job's origin is on '{origin.get('platform')}', not '{part}'"
+            )
+            hints.append(
+                f"no home channel is configured for '{part}' ({why}, so a bare "
+                f"platform name can only deliver to that platform's home "
+                f"channel) - run /sethome in the target {part} chat, or set "
+                f"{env_var}, or change the job's deliver to '{part}:<chat_id>'"
+            )
+    if not hints:
+        return f"no delivery target resolved for deliver={deliver_value}"
+    return (
+        f"no delivery target resolved for deliver={deliver_value}: "
+        + "; ".join(hints)
+    )
+
+
 def _resolve_delivery_target(job: dict) -> Optional[dict]:
     """Resolve the concrete auto-delivery target for a cron job, if any."""
     targets = _resolve_delivery_targets(job)
@@ -2885,7 +2933,7 @@ def _deliver_result(job: dict, content: str, adapters=None, loop=None) -> Option
                 job.get("name", job.get("id", "?")),
             )
             return None
-        msg = f"no delivery target resolved for deliver={deliver_value}"
+        msg = _unresolved_delivery_reason(job, deliver_value)
         logger.warning("Job '%s': %s", job["id"], msg)
         return msg
 

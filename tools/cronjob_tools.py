@@ -366,6 +366,28 @@ def _origin_from_env() -> Optional[Dict[str, str]]:
     return None
 
 
+def _named_delivery_platforms(job: Dict[str, Any]) -> List[str]:
+    """The concrete platform names named in a job's ``deliver``, in order.
+
+    Used to tell "this job has no delivery channel at all" (deliver=origin from
+    a CLI session) apart from "the user named a platform but it has no home
+    channel" — two failures with completely different remedies.
+    ``local``/``origin``/``all`` routing intents and explicit
+    ``platform:chat_id`` targets are excluded: the former name no platform, the
+    latter carry their own target and fail for unrelated reasons.
+    """
+    deliver = str(job.get("deliver") or "").strip()
+    names: List[str] = []
+    for part in (piece.strip() for piece in deliver.split(",")):
+        if not part or ":" in part:
+            continue
+        if part.lower() in {"local", "origin", "all"}:
+            continue
+        if part not in names:
+            names.append(part)
+    return names
+
+
 def _local_delivery_notice(job: Dict[str, Any], user_deliver: Optional[str]) -> Optional[str]:
     """Return an informational notice when a created job won't deliver anywhere.
 
@@ -378,6 +400,13 @@ def _local_delivery_notice(job: Dict[str, Any], user_deliver: Optional[str]) -> 
     dropping the user's "tell me when it runs" intent is the trap reported in
     #51568. Surface it at create time so the agent can relay it instead of
     promising a delivery that never happens.
+
+    A job whose ``deliver`` names a concrete platform (``deliver='discord'``)
+    gets a DIFFERENT notice: the generic text below tells the user to "set
+    deliver to a gateway-connected platform", which is advice they have
+    already followed, so it sent them looking in the wrong place. For a named
+    platform the only thing that can resolve a bare name is that platform's
+    home channel, so say that instead.
 
     Returns ``None`` when the user explicitly asked for ``local`` (no surprise),
     or when the job resolves to a real delivery target.
@@ -394,6 +423,20 @@ def _local_delivery_notice(job: Dict[str, Any], user_deliver: Optional[str]) -> 
         # If resolution can't be evaluated, fall back to the origin signal.
         if job.get("origin"):
             return None
+
+    named = _named_delivery_platforms(job)
+    if named:
+        platforms = ", ".join(f"'{name}'" for name in named)
+        first = named[0]
+        return (
+            f"This job will NOT deliver anywhere yet: no home channel is "
+            f"configured for {platforms}, and this job has no origin chat on "
+            f"{first} to fall back on, so a bare platform name has nothing to "
+            f"resolve to. Its output is still saved (view it with "
+            f"cronjob(action='list')). To make it deliver, run /sethome in the "
+            f"target {first} chat, or set the job's deliver to "
+            f"'{first}:<chat_id>'."
+        )
     return (
         "This is a local-only cron job: its output is saved (view it with "
         "cronjob(action='list')) but will NOT be delivered back into this "
