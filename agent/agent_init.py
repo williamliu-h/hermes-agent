@@ -1119,6 +1119,13 @@ def init_agent(
     # same image history.
     agent._anthropic_image_fallback_cache: Dict[str, str] = {}
 
+    # Vision-capability flags, latched for the life of the session so the
+    # serialized form of a screenshot tool result never changes mid-conversation
+    # and invalidates the prompt cache.  See
+    # ``run_agent.AIAgent._latched_vision_capability``; cleared on session
+    # rotation by ``reset_session_state``.
+    agent._vision_capability_latch: Dict[Any, bool] = {}
+
     # Initialize LLM client via centralized provider router.
     # The router handles auth resolution, base URL, headers, and
     # Codex/Anthropic wrapping for all known providers.

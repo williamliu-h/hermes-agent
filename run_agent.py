@@ -796,6 +796,12 @@ class AIAgent:
         # False for tool-loop follow-ups (#3040).
         self._is_user_initiated_turn = False
 
+        # A new conversation is a new cache lineage, so re-resolve the vision
+        # capability flags that shape how image tool results are serialized.
+        # Within a session they stay latched (see
+        # ``_latched_vision_capability``); this is the only place they reset.
+        self._vision_capability_latch = {}
+
         # Context engine reset/transition (works for built-in compressor and plugins)
         self._transition_context_engine_session(
             old_session_id=old_session_id,
@@ -7185,6 +7191,48 @@ class AIAgent:
         self._anthropic_image_fallback_cache[cache_key] = note
         return note
 
+    def _latched_vision_capability(self, name: str, probe: Callable[[], bool]) -> bool:
+        """Resolve a render-shaping capability flag once per (session, model).
+
+        The vision capability probes are not pure: they read config.yaml from
+        disk, consult the models.dev catalog (4h TTL, network on a cold cache)
+        and the provider profile registry. The same probe can therefore
+        legitimately answer differently at two points in one conversation — a
+        catalog fetch lands, a TTL expires, a lookup times out, config.yaml is
+        edited mid-session.
+
+        These flags decide whether *every* historical image tool result (mostly
+        browser screenshots) is serialized as a native image block or as a
+        ``_multimodal_text_summary`` text note. A single mid-session flip
+        rewrites the api_messages bytes from the first image-bearing message
+        onward, so the Anthropic prompt cache misses from that point for the
+        rest of the conversation and every later turn pays full
+        cache_creation again. Per-conversation caching is sacred, and history
+        is only ever altered by context compression — so the first resolved
+        value wins and is reused for the rest of the session.
+
+        Keyed by (capability, provider, model): an intentional ``/model``
+        switch or a mid-turn provider failover re-resolves (that is a new
+        cache lineage anyway), while a probe flip under a fixed identity is
+        ignored. The latch lives on the instance and is cleared at session
+        boundaries by ``reset_session_state``, so it never leaks across
+        conversations.
+        """
+        latch = getattr(self, "_vision_capability_latch", None)
+        if not isinstance(latch, dict):
+            latch = {}
+            self._vision_capability_latch = latch
+        key = (
+            name,
+            (getattr(self, "provider", "") or "").strip().lower(),
+            (getattr(self, "model", "") or "").strip(),
+        )
+        if key in latch:
+            return latch[key]
+        value = bool(probe())
+        latch[key] = value
+        return value
+
     def _model_supports_vision(self) -> bool:
         """Return True if the active provider+model reports native vision.
 
@@ -7192,12 +7240,25 @@ class AIAgent:
         messages (for non-vision models) or let the provider adapter handle
         them natively (for vision-capable models).
 
+        Latched per session — see ``_latched_vision_capability`` for why the
+        answer must not change mid-conversation.
+        """
+        return self._latched_vision_capability(
+            "model_supports_vision", self._probe_model_supports_vision
+        )
+
+    def _probe_model_supports_vision(self) -> bool:
+        """Uncached vision-capability resolution (see ``_model_supports_vision``).
+
         Resolution order (see ``agent.image_routing._supports_vision_override``):
           1. ``model.supports_vision`` (top-level, single-model shortcut)
           2. ``providers.<provider>.models.<model>.supports_vision``
           3. models.dev capability lookup
         Custom/local models absent from models.dev would otherwise be
         misclassified as non-vision and have their images stripped.
+
+        Call ``_model_supports_vision`` instead: this is the raw probe and
+        callers on the request path must go through the session latch.
         """
         try:
             from hermes_cli.config import load_config
@@ -7215,6 +7276,24 @@ class AIAgent:
         Some providers (e.g. Xiaomi MiMo) support multimodal user messages
         but reject list-type tool message content with 400 errors.  This
         checks the provider profile's ``supports_vision_tool_messages`` field.
+
+        Latched per session alongside ``_model_supports_vision``: it selects
+        the same two renderings of the same tool result, so a flip would
+        destabilize the history bytes in exactly the same way. The in-session
+        *learned* downgrade (``_no_list_tool_content_models``) is deliberately
+        not latched — that one only ever fires after the provider has already
+        rejected the request, which has invalidated the suffix regardless.
+        """
+        return self._latched_vision_capability(
+            "provider_supports_vision_tool_messages",
+            self._probe_provider_supports_vision_tool_messages,
+        )
+
+    def _probe_provider_supports_vision_tool_messages(self) -> bool:
+        """Uncached provider-profile lookup for list-type tool content support.
+
+        Call ``_provider_supports_vision_tool_messages`` instead — request-path
+        callers must go through the session latch.
         """
         try:
             from providers import get_provider_profile

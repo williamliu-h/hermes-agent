@@ -38,6 +38,16 @@ def _make_agent(provider="openrouter", model="gpt-4o"):
         return False
 
     agent._content_has_image_parts = _real_content_has_image_parts
+    # The capability accessors go through the per-session latch, so bind it and
+    # the raw probes too (a MagicMock would otherwise swallow the call).
+    agent._vision_capability_latch = {}
+    agent._latched_vision_capability = (
+        lambda name, probe: AIAgent._latched_vision_capability(agent, name, probe)
+    )
+    agent._probe_model_supports_vision = lambda: AIAgent._probe_model_supports_vision(agent)
+    agent._probe_provider_supports_vision_tool_messages = (
+        lambda: AIAgent._probe_provider_supports_vision_tool_messages(agent)
+    )
     agent._model_supports_vision = lambda: AIAgent._model_supports_vision(agent)
     agent._provider_supports_vision_tool_messages = lambda: AIAgent._provider_supports_vision_tool_messages(agent)
     agent._tool_result_content_for_active_model = (

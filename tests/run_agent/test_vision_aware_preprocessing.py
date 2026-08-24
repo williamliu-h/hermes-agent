@@ -149,14 +149,16 @@ class TestModelSupportsVision:
         assert agent._model_supports_vision() is False
 
     def test_uses_get_model_capabilities(self):
-        agent = _make_agent()
+        # One agent per answer: the capability is latched for the life of a
+        # session (see tests/agent/test_vision_capability_latch.py), so a
+        # single instance would keep reporting whatever it resolved first.
         fake_caps = MagicMock()
         fake_caps.supports_vision = True
         with patch("agent.models_dev.get_model_capabilities", return_value=fake_caps):
-            assert agent._model_supports_vision() is True
+            assert _make_agent()._model_supports_vision() is True
         fake_caps.supports_vision = False
         with patch("agent.models_dev.get_model_capabilities", return_value=fake_caps):
-            assert agent._model_supports_vision() is False
+            assert _make_agent()._model_supports_vision() is False
 
     def test_none_caps_returns_false(self):
         agent = _make_agent()
